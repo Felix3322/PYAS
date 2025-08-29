@@ -1,4 +1,59 @@
-import os, gc, re, sys, time, json, shutil
+import os, gc, re, sys, time, json, shutil, subprocess
+
+
+def watchdog_main(target_pid):
+    log_path = os.path.join(os.path.dirname(__file__), "pyas_watchdog.log")
+
+    def write_log(text):
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {text}\n")
+
+    try:
+        import wmi  # type: ignore
+        import psutil  # type: ignore
+    except Exception:
+        wmi = None  # type: ignore
+        psutil = None  # type: ignore
+
+    while True:
+        killer = "Unknown"
+        if wmi and psutil:
+            try:
+                watcher = wmi.WMI().watch_for(notification_type="deletion", wmi_class="Win32_Process", ProcessId=target_pid)
+                event = watcher()
+                parent_pid = getattr(event, "ParentProcessId", None)
+                if parent_pid and psutil.pid_exists(parent_pid):
+                    try:
+                        killer = f"{psutil.Process(parent_pid).name()} (PID {parent_pid})"
+                    except Exception:
+                        killer = f"PID {parent_pid}"
+            except Exception:
+                pass
+        else:
+            try:
+                import psutil as _psutil  # type: ignore
+                while _psutil.pid_exists(target_pid):
+                    time.sleep(1)
+            except Exception:
+                while True:
+                    try:
+                        os.kill(target_pid, 0)
+                        time.sleep(1)
+                    except OSError:
+                        break
+
+        write_log(f"PYAS.exe terminated by {killer}")
+        proc = subprocess.Popen([sys.executable, os.path.abspath(__file__), "--watcher", str(os.getpid())])
+        target_pid = proc.pid
+
+
+if "--watchdog" in sys.argv:
+    idx = sys.argv.index("--watchdog")
+    pid = int(sys.argv[idx + 1])
+    del sys.argv[idx:idx + 2]
+    watchdog_main(pid)
+    sys.exit(0)
+
 import ctypes, ctypes.wintypes, threading
 import requests, webbrowser, winreg, msvcrt
 import traceback, hashlib
@@ -80,8 +135,9 @@ class MainWindow_Controller(QMainWindow):
     scan_reset_signal = Signal()
     progress_title_signal = Signal(str)
 
-    def __init__(self):
+    def __init__(self, watcher_pid=None):
         super().__init__()
+        self.watchdog_pid = watcher_pid
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.init_environ()
@@ -137,7 +193,7 @@ class MainWindow_Controller(QMainWindow):
             "process_switch": True,
             "document_switch": True,
             "system_switch": True,
-            "driver_switch": True,
+            "keepalive_switch": True,
             "network_switch": True,
             "custom_rule": [],
         }
@@ -180,8 +236,6 @@ class MainWindow_Controller(QMainWindow):
         self.file_config = os.path.join(self.path_config, "PYAS", "Config.json")
         self.path_models = os.path.join(self.path_pyas, "Engine", "Models")
         self.path_rules = os.path.join(self.path_pyas, "Engine", "Rules")
-        self.path_protect = os.path.join(self.path_pyas, "Plugins", "Filter")
-        self.path_drivers = os.path.join(self.path_protect, "PYAS_Driver.sys")
 
 ####################################################################################################
 
@@ -368,13 +422,12 @@ class MainWindow_Controller(QMainWindow):
         elif name == "system_switch":
             if checked:
                 self.start_daemon_thread(self.protect_system_thread)
-        elif name == "driver_switch":
-            if not checked:
-                self.stop_system_driver()
-            elif self.install_system_driver():
-                self.start_daemon_thread(self.pipe_server_thread)
+        elif name == "keepalive_switch":
+            if checked:
+                self.start_watchdog()
+                self.start_daemon_thread(self.watchdog_monitor_thread)
             else:
-                self.send_message("驅動防護啟用失敗，請重啟裝置來修復錯誤", "warn", True)
+                self.stop_watchdog()
         elif name == "network_switch":
             if checked:
                 self.start_daemon_thread(self.protect_net_thread)
@@ -596,11 +649,11 @@ class MainWindow_Controller(QMainWindow):
             self.pyas_config["process_switch"] = False
             self.pyas_config["document_switch"] = False
             self.pyas_config["system_switch"] = False
-            self.pyas_config["driver_switch"] = False
+            self.pyas_config["keepalive_switch"] = False
             self.pyas_config["network_switch"] = False
 
             self.stop_button()
-            self.stop_system_driver()
+            self.stop_watchdog()
 
             self.minimize_button()
             while self.isVisible():
@@ -1851,97 +1904,56 @@ class MainWindow_Controller(QMainWindow):
                 self.send_message(e, "warn", False)
 
 ####################################################################################################
-
-    def install_system_driver(self):
-        service_name = "PYAS_Driver"
-        scm = self.advapi32.OpenSCManagerW(None, None, 0xF003F)
-        if not scm:
-            return False
-
-        svc = self.advapi32.CreateServiceW(scm, service_name, service_name, 0xF01FF, 
-            0x00000001, 0x00000003, 0x00000001, self.path_drivers, None, None, None, None, None)
-        if not svc:
-            svc = self.advapi32.OpenServiceW(scm, service_name, 0xF01FF)
-            if not svc:
-                self.advapi32.CloseServiceHandle(scm)
-                return False
-
-        res = self.advapi32.StartServiceW(svc,0,None)
-        self.advapi32.CloseServiceHandle(svc)
-        self.advapi32.CloseServiceHandle(scm)
-        return bool(res)
-
-    def stop_system_driver(self):
-        service_name = "PYAS_Driver"
-        scm = self.advapi32.OpenSCManagerW(None, None, 0xF003F)
-        if not scm:
-            return False
-
-        svc = self.advapi32.OpenServiceW(scm, service_name, 0xF01FF)
-        if not svc:
-            self.advapi32.CloseServiceHandle(scm)
-            return False
-
-        status = SERVICE_STATUS()
-        self.advapi32.ControlService(svc, 0x00000001, ctypes.byref(status))
-        self.advapi32.DeleteService(svc)
-        self.advapi32.CloseServiceHandle(svc)
-        self.advapi32.CloseServiceHandle(scm)
-        return True
-
-####################################################################################################
-
-    def pipe_server_thread(self):
-        pipe_path = r"\\.\pipe\PYAS_Output_Pipe"
-        PIPE_BUF_SIZE = 65536
-
-        while self.pyas_config.get("driver_switch", False):
+    def start_watchdog(self):
+        if getattr(self, "watchdog_pid", None):
             try:
-                hPipe = self.kernel32.CreateNamedPipeW(pipe_path, 0x00000001, 0x00000004 | 0x00000002, 1, PIPE_BUF_SIZE, PIPE_BUF_SIZE, 0, None)
-                if hPipe == ctypes.c_void_p(-1).value:
-                    time.sleep(0.2)
-                    continue
+                import psutil  # type: ignore
+                if psutil.pid_exists(self.watchdog_pid):
+                    return
+            except Exception:
+                pass
+        try:
+            proc = subprocess.Popen([sys.executable, os.path.abspath(__file__), "--watchdog", str(os.getpid())])
+            self._watchdog_proc = proc
+            self.watchdog_pid = proc.pid
+        except Exception as e:
+            self.send_message(e, "warn", False)
 
-                while self.pyas_config.get("driver_switch", False):
-                    if not self.kernel32.ConnectNamedPipe(hPipe, None) and self.kernel32.GetLastError() != 535:
-                        time.sleep(0.2)
-                        continue
+    def stop_watchdog(self):
+        try:
+            if getattr(self, "_watchdog_proc", None) and self._watchdog_proc.poll() is None:
+                self._watchdog_proc.terminate()
+        except Exception:
+            pass
 
-                    buf = ctypes.create_string_buffer(PIPE_BUF_SIZE)
-                    bytes_read = ctypes.c_ulong(0)
-                    if not self.kernel32.ReadFile(hPipe, buf, PIPE_BUF_SIZE, ctypes.byref(bytes_read), None) or bytes_read.value == 0:
-                        self.kernel32.DisconnectNamedPipe(hPipe)
-                        time.sleep(0.2)
-                        continue
-
-                    msg = buf.raw[:bytes_read.value].decode("utf-8", errors="ignore")
-                    parts = [p.strip() for p in msg.split("|", 3)]
-                    if len(parts) == 4:
-                        rules, pid, raw_path, target = parts
-                        for old, new in self.block_replace.items():
-                            rules = rules.replace(old, new)
-                        self.send_message(f"驅動防護 | {rules} | {pid} | {raw_path} | {target}", "notify", True)
-
-                        file_path = self.norm_path(self.device_path_to_drive(raw_path))
-                        if not self.is_in_whitelist(file_path) and not self.sign.sign_verify(file_path):
-                            try:
-                                h = self.kernel32.OpenProcess(0x1F0FFF, False, int(pid.strip()))
-                                if h:
-                                    self.kernel32.TerminateProcess(h, 0)
-                                    self.kernel32.CloseHandle(h)
-                            except Exception as e:
-                                self.send_message(e, "warn", False)
-
-                    self.kernel32.DisconnectNamedPipe(hPipe)
-                self.kernel32.CloseHandle(hPipe)
-            except Exception as e:
-                self.send_message(e, "warn", False)
-                time.sleep(0.5)
+    def watchdog_monitor_thread(self):
+        while self.pyas_config.get("keepalive_switch", False):
+            try:
+                pid = getattr(self, "watchdog_pid", None)
+                alive = False
+                if pid:
+                    try:
+                        import psutil  # type: ignore
+                        alive = psutil.pid_exists(pid)
+                    except Exception:
+                        if getattr(self, "_watchdog_proc", None):
+                            alive = self._watchdog_proc.poll() is None
+                if not alive:
+                    self.start_watchdog()
+            except Exception:
+                pass
+            time.sleep(2)
 
 ####################################################################################################
 
 if __name__ == "__main__":
+    if "--watcher" in sys.argv:
+        idx = sys.argv.index("--watcher")
+        watcher_pid = int(sys.argv[idx + 1])
+        del sys.argv[idx:idx + 2]
+    else:
+        watcher_pid = None
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
-    MainWindow_Controller()
+    MainWindow_Controller(watcher_pid)
     sys.exit(app.exec())

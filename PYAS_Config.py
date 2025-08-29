@@ -57,7 +57,7 @@ translate_dict = {
               "複製":"Copy ","此":"This ","並":"And ","全盤":"Full ","最新":"Latest ",
               "已存在":"Already ","數據庫":"Database ","誤報":"False Positive ",
               "高":"High ","新":"New ","和":"And ","可能會":"Possible ","會":"Can ",
-              "日誌":"Log","已":"Has ","彈窗":"Window ","要":"To ","驅動":"Driver ",
+              "日誌":"Log","已":"Has ","彈窗":"Window ","要":"To ","保活":"Keepalive ",
               "的":"","顯示":"","個":"","嗎":"","了":"","行":"","立即":"","規則":"Rule ",
               "密鑰":"Key ","檢測":"Detect ","製作":"Maker ","運行":"Running",
               "擴展":"Extension ","套件":"Kit ","自動":"Auto ","上報":"Report ",

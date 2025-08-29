@@ -42,18 +42,6 @@ PYAS/
 │       ├── rules.yar                # Yara virus signature rule matching
 │       └── rules.ips                # IP network address rule matching
 │
-├── Plugins/
-│   └── Filter/
-│       ├── DriverEntry.c            # Main driver entry and initialization logic
-│       ├── DriverEntry.h            # Global driver definitions, constants, and functions
-│       ├── DriverPipe.c             # Kernel to user pipe logging implementation
-│       ├── ProtectBoot.c            # Disk boot sector write protection
-│       ├── ProtectImage.c           # Image load monitoring and shellcode detection
-│       ├── ProtectInject.c          # Process thread handle access control to prevent injection
-│       ├── ProtectReg.c             # Registry modification protection
-│       ├── ProtectRules.c           # White, block list, and matching logic for files registry
-│       └── ProtectRules.h           # Protection rule declarations
-│
 ├── PYAS.py                          # Main application entry point and UI to engine interface
 ├── PYAS_Config.py                   # Configuration loading, saving, and global parameters
 ├── PYAS_Engine.py                   # Core scanning engine: YARA, IP, ONNX model execution

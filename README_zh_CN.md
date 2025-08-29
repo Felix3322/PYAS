@@ -42,18 +42,6 @@ PYAS/
 │       ├── rules.yar                # YARA 病毒特征码规则匹配
 │       └── rules.ips                # IP 网络地址规则匹配
 │
-├── Plugins/
-│   └── Filter/
-│       ├── DriverEntry.c            # 驱动主入口与初始化逻辑
-│       ├── DriverEntry.h            # 全局驱动定义、常量与函数
-│       ├── DriverPipe.c             # 内核与用户层的管道日志传输实现
-│       ├── ProtectBoot.c            # 磁盘引导区写入保护
-│       ├── ProtectImage.c           # 映像加载监控与 shellcode 检测
-│       ├── ProtectInject.c          # 进程与线程控制，防止注入
-│       ├── ProtectReg.c             # 注册表修改保护
-│       ├── ProtectRules.c           # 白名单、阻止名单与文件/注册表匹配逻辑
-│       └── ProtectRules.h           # 保护规则声明
-│
 ├── PYAS.py                          # 主应用程序入口点与 UI 到引擎的接口
 ├── PYAS_Config.py                   # 配置加载、保存与全局参数
 ├── PYAS_Engine.py                   # 核心扫描引擎：YARA、IP、ONNX 模型执行
